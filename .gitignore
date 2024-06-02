@@ -8,4 +8,5 @@ node_modules
 cdk.out
 
 bastion.pem
+bastion_id_rsa.pub
 

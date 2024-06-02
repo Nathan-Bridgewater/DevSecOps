@@ -1,5 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
-import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as autoscale from 'aws-cdk-lib/aws-autoscaling'; 
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as fs from 'fs';
 import { Construct } from 'constructs';
 
 export class DevSecOpsExampleStack extends cdk.Stack {
@@ -18,14 +20,38 @@ export class DevSecOpsExampleStack extends cdk.Stack {
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16')
     })
 
-    const bastion = new ec2.Instance(this, 'BastionHost', {
+    const bastionAsg = new autoscale.AutoScalingGroup(this, 'BastionASG', {
       vpc: vpc,
-      vpcSubnets: vpc.selectSubnets({subnetType: ec2.SubnetType.PUBLIC}),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE2, ec2.InstanceSize.MICRO),
+      vpcSubnets: vpc.selectSubnets({ 
+        subnetType: ec2.SubnetType.PUBLIC,
+      }),
+      minCapacity: 2,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
       machineImage: new ec2.AmazonLinuxImage({generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2}),
       keyName: 'bastion'
     })
 
-    bastion.connections.allowFrom(ec2.Peer.ipv4('94.9.162.214/32'), ec2.Port.tcp(22))
+    bastionAsg.connections.allowFrom(ec2.Peer.ipv4('94.9.162.214/32'), ec2.Port.tcp(22))
+
+    const jenkinsUserData = ec2.UserData.forLinux();
+    jenkinsUserData.addCommands(
+      'mkdir -p /home/ec2-user/.ssh',
+      `echo ${fs.readFileSync('../bastion_id_rsa.pub')} > /home/ec2-user/.ssh/authorized_keys`,
+      'chown -R ec2-user:ec2-user /home/ec2-user/.ssh',
+      'chmod 600 /home/ec2-user/.ssh/authorized_keys'
+    )
+
+    const jenkinsAsg = new autoscale.AutoScalingGroup(this, 'JenkinsASG', {
+      vpc: vpc,
+      vpcSubnets: vpc.selectSubnets({
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      }),
+      minCapacity: 2,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
+      machineImage: new ec2.AmazonLinuxImage({generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2})
+    })
+    
+    jenkinsAsg.connections.allowFrom(bastionAsg, ec2.Port.tcp(8080))
+
   }
 }
